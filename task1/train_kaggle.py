@@ -79,7 +79,19 @@ class TopAneuDataset(Dataset):
         if not image_path.is_file():
             image_path = self.images_dir / f"{cid}.nii.gz"
         vessel_path = self.vessel_masks_dir / f"{cid}.nii.gz"
-        volume = load_and_resize_case(str(image_path), str(vessel_path))
+        if vessel_path.is_file():
+            volume = load_and_resize_case(str(image_path), str(vessel_path))
+        else:
+            # fallback: intensity only + zero vessel channel
+            import numpy as np, nibabel as nib
+            from scipy.ndimage import zoom
+            img = nib.load(str(image_path)).get_fdata().astype(np.float32)
+            zf = [t/s for t,s in zip((128,128,128), img.shape)]
+            img = zoom(img, zf, order=1)
+            nz = img[img>0]
+            if nz.size:
+                img = (img - nz.mean()) / (nz.std()+1e-8)
+            volume = np.stack([img, np.zeros_like(img)], 0).astype(np.float32)
         labels = self.Y[real_idx].copy().astype(np.float32)
 
         volume_t = torch.from_numpy(volume)
