@@ -73,7 +73,7 @@ class ResidualHead(nn.Module):
         for i in range(len(widths) - 1):
             self.layers.append(nn.Linear(widths[i], widths[i + 1]))
             if i < len(widths) - 2:  # لا BatchNorm/ReLU/Dropout بعد الطبقة الأخيرة (logits خام)
-                self.norms.append(nn.BatchNorm1d(widths[i + 1]))
+                self.norms.append(nn.LayerNorm(widths[i + 1]))
             self.skip_proj.append(nn.Linear(widths[0], widths[i + 1], bias=False))
         self.drop = nn.Dropout(dropout)
         self.act = nn.ReLU()

@@ -185,11 +185,11 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
-        num_workers=args.num_workers, pin_memory=True,
+        num_workers=args.num_workers, pin_memory=True, drop_last=True,
     )
     val_loader = DataLoader(
         val_ds, batch_size=args.batch_size, shuffle=False,
-        num_workers=args.num_workers, pin_memory=True,
+        num_workers=args.num_workers, pin_memory=True, drop_last=False,
     )
 
     model = TopAneuNet(in_channels=2, feature_dim=512).to(device)
@@ -280,6 +280,28 @@ def find_data_root(explicit: str = None) -> Path:
 
 
 def main():
+    import sys as _sys
+    _log_path = Path("/kaggle/working/train.log")
+    class _Tee:
+        def __init__(self, *streams):
+            self.streams = streams
+        def write(self, data):
+            for s in self.streams:
+                try:
+                    s.write(data); s.flush()
+                except Exception:
+                    pass
+        def flush(self):
+            for s in self.streams:
+                try: s.flush()
+                except Exception: pass
+    try:
+        _sys.stdout = _Tee(_sys.__stdout__, open(_log_path, "a", buffering=1))
+        _sys.stderr = _Tee(_sys.__stderr__, open(_log_path, "a", buffering=1))
+        print("TRAIN_LOG", _log_path)
+    except Exception as _e:
+        print("tee failed", _e)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=str, default=None)
     parser.add_argument("--output-dir", type=str, default="/kaggle/working/models")
