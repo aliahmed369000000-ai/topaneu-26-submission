@@ -1,4 +1,5 @@
 torch>=2.0.0
 numpy>=1.24.0
-nibabel>=5.0.0
+SimpleITK>=2.3.0
 scipy>=1.10.0
+nibabel>=5.0.0
