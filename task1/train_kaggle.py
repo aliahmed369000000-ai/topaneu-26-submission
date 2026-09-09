@@ -83,14 +83,14 @@ class TopAneuDataset(Dataset):
             volume = load_and_resize_case(str(image_path), str(vessel_path))
         else:
             # fallback: intensity only + zero vessel channel
-            import numpy as np, nibabel as nib
+            import nibabel as nib
             from scipy.ndimage import zoom
             img = nib.load(str(image_path)).get_fdata().astype(np.float32)
-            zf = [t/s for t,s in zip((128,128,128), img.shape)]
+            zf = [tgt / src for tgt, src in zip((128, 128, 128), img.shape)]
             img = zoom(img, zf, order=1)
-            nz = img[img>0]
+            nz = img[img > 0]
             if nz.size:
-                img = (img - nz.mean()) / (nz.std()+1e-8)
+                img = (img - nz.mean()) / (nz.std() + 1e-8)
             volume = np.stack([img, np.zeros_like(img)], 0).astype(np.float32)
         labels = self.Y[real_idx].copy().astype(np.float32)
 
@@ -333,7 +333,17 @@ def main():
     if location_mapping_path is None:
         raise FileNotFoundError("location_mapping.json غير موجود")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
+    if torch.cuda.is_available():
+        try:
+            # detect incompatible GPU (e.g. P100 sm_60 with new PyTorch)
+            x = torch.zeros(1, device="cuda")
+            del x
+            torch.cuda.empty_cache()
+            device = torch.device("cuda")
+        except Exception as e:
+            print(f"CUDA unusable ({e}); falling back to CPU")
+            device = torch.device("cpu")
     print(f"الجهاز: {device}")
     print(f"البيانات: {data_root}")
     print(f"الإخراج: {args.output_dir}")
