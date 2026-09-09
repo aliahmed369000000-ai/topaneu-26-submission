@@ -75,7 +75,9 @@ class TopAneuDataset(Dataset):
         real_idx = idx % len(self.case_ids)
         cid = self.case_ids[real_idx]
 
-        image_path = self.images_dir / f"{cid}.nii.gz"
+        image_path = self.images_dir / f"{cid}_0000.nii.gz"
+        if not image_path.is_file():
+            image_path = self.images_dir / f"{cid}.nii.gz"
         vessel_path = self.vessel_masks_dir / f"{cid}.nii.gz"
         volume = load_and_resize_case(str(image_path), str(vessel_path))
         labels = self.Y[real_idx].copy().astype(np.float32)
@@ -303,10 +305,32 @@ def main():
     print(f"الإخراج: {args.output_dir}")
 
     location_mapping = json.load(open(location_mapping_path))
-    case_ids = sorted(p.stem.replace(".nii", "") for p in args.images_dir.glob("*.nii.gz"))
+    def case_id_from_image(path: Path) -> str:
+        # images: topaneu_center1_mr_001_0000.nii.gz -> topaneu_center1_mr_001
+        # jsons/masks: topaneu_center1_mr_001.json (no _0000)
+        name = path.name
+        if name.endswith(".nii.gz"):
+            name = name[:-7]
+        elif name.endswith(".nii"):
+            name = name[:-4]
+        if name.endswith("_0000"):
+            name = name[:-5]
+        return name
+
+    case_ids = sorted({case_id_from_image(p) for p in args.images_dir.glob("*.nii.gz")})
     print(f"عدد الحالات: {len(case_ids)}")
     if len(case_ids) == 0:
         raise RuntimeError("لا توجد صور .nii.gz في images/")
+
+    # verify image path resolution uses _0000 suffix
+    sample = case_ids[0]
+    img_candidates = [
+        args.images_dir / f"{sample}_0000.nii.gz",
+        args.images_dir / f"{sample}.nii.gz",
+    ]
+    print(f"مثال case_id={sample}")
+    for c in img_candidates:
+        print(f"  exists {c.name}: {c.is_file()}")
 
     Y = build_label_matrix(str(location_jsons_dir), location_mapping, case_ids, n_classes=N_CLASSES)
     folds = make_folds(case_ids, Y, n_splits=args.n_splits, seed=args.seed)

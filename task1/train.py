@@ -62,7 +62,9 @@ class TopAneuDataset(Dataset):
         real_idx = idx % len(self.case_ids)
         cid = self.case_ids[real_idx]
 
-        image_path = self.images_dir / f"{cid}.nii.gz"
+        image_path = self.images_dir / f"{cid}_0000.nii.gz"
+        if not image_path.is_file():
+            image_path = self.images_dir / f"{cid}.nii.gz"
         vessel_path = self.vessel_masks_dir / f"{cid}.nii.gz"
         volume = load_and_resize_case(str(image_path), str(vessel_path))  # (2,128,128,128)
         labels = self.Y[real_idx].copy().astype(np.float32)
@@ -203,7 +205,13 @@ def main():
     print(f"الجهاز: {device}")
 
     location_mapping = json.load(open(location_mapping_path))
-    case_ids = sorted(p.stem.replace(".nii", "") for p in args.images_dir.glob("*.nii.gz"))
+    def _cid(path):
+        name = path.name
+        if name.endswith(".nii.gz"): name = name[:-7]
+        elif name.endswith(".nii"): name = name[:-4]
+        if name.endswith("_0000"): name = name[:-5]
+        return name
+    case_ids = sorted({_cid(p) for p in args.images_dir.glob("*.nii.gz")})
     print(f"عدد الحالات: {len(case_ids)}")
 
     Y = build_label_matrix(str(location_jsons_dir), location_mapping, case_ids, n_classes=N_CLASSES)
