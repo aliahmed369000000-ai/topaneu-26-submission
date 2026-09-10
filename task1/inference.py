@@ -17,6 +17,7 @@ main.py الرسمي يستدعي:
 """
 
 from pathlib import Path
+import json
 import numpy as np
 import torch
 import SimpleITK as sitk
@@ -39,8 +40,18 @@ FOLD_WEIGHTS = [
 # fallback إذا وُجد نموذج واحد نهائي
 FINAL_WEIGHT = "topaneu_task1_final.pt"
 
-# threshold عام (يُفضّل معايرته لاحقًا على Validation لتعظيم MCC)
+# threshold عام (احتياطي فقط -- يُستخدم إذا لم يوجد models/thresholds.json)
 DECISION_THRESHOLD = 0.45
+
+# ملف المعايرة لكل فئة (يُنتجه calibrate_threshold.py). إذا وُجد، يُستخدم
+# threshold مستقل لكل فئة من الـ52 بدل القيمة العامة أعلاه -- هذا يقلل
+# False Positives بشكل ملموس، خصوصًا للفئات النادرة جدًا التي threshold
+# عام واحد يعاملها بنفس معاملة الفئات الشائعة (راجع جلسة التصميم:
+# استراتيجية تقليل False Positives).
+THRESHOLDS_FILE_CANDIDATES = [
+    Path("/opt/ml/model/thresholds.json"),
+    Path("./models/thresholds.json"),
+]
 
 # هل نستخدم Test-Time Flip (يتطلب flip_map)
 USE_TTA_FLIP = True
@@ -61,6 +72,26 @@ FLIP_MAP = {
 
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _MODELS = None  # list of models (ensemble)
+_PER_CLASS_THRESHOLDS = None  # يُحمَّل مرة واحدة من thresholds.json إن وُجد
+
+
+def _load_thresholds_once():
+    """يحمّل thresholds.json إن وُجد (52 قيمة، واحدة لكل فئة). إذا لم يوجد
+    الملف، يرجع None ونستخدم DECISION_THRESHOLD العام كـ fallback."""
+    global _PER_CLASS_THRESHOLDS
+    if _PER_CLASS_THRESHOLDS is not None:
+        return _PER_CLASS_THRESHOLDS
+
+    for path in THRESHOLDS_FILE_CANDIDATES:
+        if path.is_file():
+            data = json.loads(path.read_text())
+            thr_list = data.get("per_class_thresholds")
+            if thr_list and len(thr_list) == 52:
+                _PER_CLASS_THRESHOLDS = np.array(thr_list, dtype=np.float32)
+                return _PER_CLASS_THRESHOLDS
+
+    _PER_CLASS_THRESHOLDS = False  # علامة "بحثنا ولم نجد" لتفادي إعادة المحاولة كل مرة
+    return _PER_CLASS_THRESHOLDS
 
 
 def _load_models_once():
@@ -166,7 +197,12 @@ def _predict_probs(volume: np.ndarray) -> np.ndarray:
 
 
 def _probs_to_locations(probs: np.ndarray, threshold: float = DECISION_THRESHOLD) -> list:
-    """تحويل احتمالات (52,) إلى قائمة قيم 1-based."""
+    """تحويل احتمالات (52,) إلى قائمة قيم 1-based.
+    يستخدم threshold مستقل لكل فئة من thresholds.json إن وُجد (أفضل بكثير
+    لتقليل False Positives)، وإلا يستخدم threshold العام كـ fallback."""
+    per_class = _load_thresholds_once()
+    if per_class is not False:
+        return [int(idx + 1) for idx, p in enumerate(probs) if p >= per_class[idx]]
     return [int(idx + 1) for idx, p in enumerate(probs) if p >= threshold]
 
 

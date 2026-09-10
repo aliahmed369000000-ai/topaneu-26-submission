@@ -57,6 +57,61 @@ def evaluate_at_threshold(probs: np.ndarray, labels: np.ndarray, thr: float):
     return mean_p, mean_r, mean_m, score
 
 
+def evaluate_class_at_threshold(y_true: np.ndarray, y_score: np.ndarray, thr: float):
+    y_pred = (y_score >= thr).astype(np.int32)
+    return precision_recall_mcc(y_true, y_pred)
+
+
+def calibrate_per_class(probs: np.ndarray, labels: np.ndarray, min_positives: int = 3):
+    """
+    يبحث عن أفضل threshold مستقل لكل فئة من الـ52 (بدل threshold عام واحد).
+
+    لماذا لكل فئة؟ الفئات الشائعة (مثل ICA terminus, MCA M1) والفئات
+    النادرة جدًا لها ديناميكيات مختلفة تمامًا؛ threshold عام واحد يجبر
+    توازنًا خاطئًا بينهما، وهو مصدر رئيسي لـ False Positives الكثيرة
+    (راجع نقاش استراتيجية تقليل False Positives في جلسة التصميم).
+
+    الفئات بعدد حالات إيجابية أقل من min_positives في Validation المجمّع
+    (بعد كل الـ folds) تُعطى threshold مرتفع جدًا (0.99) بدل قيمة
+    "محسوبة" غير موثوقة — لا توجد إشارة كافية لمعايرتها بأمان، ومحاولة
+    معايرتها ستنتج overfitting على ضجيج قليل الحالات.
+    """
+    n_classes = labels.shape[1]
+    per_class_thr = []
+    per_class_info = []
+
+    for c in range(n_classes):
+        y_true = labels[:, c]
+        y_score = probs[:, c]
+        n_pos = int(y_true.sum())
+
+        if n_pos < min_positives:
+            per_class_thr.append(0.99)
+            per_class_info.append({
+                "class_idx": c, "n_positives": n_pos, "threshold": 0.99,
+                "reason": f"إشارة غير كافية ({n_pos} < {min_positives}) — رُفض التنبؤ عمليًا",
+            })
+            continue
+
+        best_thr_c, best_mcc_c = 0.5, -1.0
+        for thr in np.arange(0.15, 0.90, 0.025):
+            _, _, mcc = evaluate_class_at_threshold(y_true, y_score, thr)
+            if not np.isnan(mcc) and mcc > best_mcc_c:
+                best_mcc_c = mcc
+                best_thr_c = float(thr)
+
+        per_class_thr.append(best_thr_c)
+        p, r, m = evaluate_class_at_threshold(y_true, y_score, best_thr_c)
+        per_class_info.append({
+            "class_idx": c, "n_positives": n_pos, "threshold": best_thr_c,
+            "precision": float(p) if not np.isnan(p) else None,
+            "recall": float(r) if not np.isnan(r) else None,
+            "mcc": float(m) if not np.isnan(m) else None,
+        })
+
+    return per_class_thr, per_class_info
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data-root", type=str, required=True)
@@ -132,9 +187,33 @@ def main():
             f"R={row['recall']:.3f}  MCC={row['mcc']:.3f}  score={row['score']:.3f}{marker}"
         )
 
+    # معايرة لكل فئة على حدة (الاستراتيجية الأساسية لتقليل False Positives)
+    per_class_thr, per_class_info = calibrate_per_class(probs, labels, min_positives=3)
+    n_rejected = sum(1 for info in per_class_info if info.get("reason"))
+    print(f"\nمعايرة لكل فئة: {n_rejected}/{len(per_class_info)} فئة رُفضت "
+          f"(إشارة غير كافية، threshold=0.99)")
+
+    # تقييم الأداء الكلي باستخدام thresholds لكل فئة (بدل العام) للمقارنة
+    preds_per_class = np.zeros_like(labels, dtype=np.int32)
+    for c in range(labels.shape[1]):
+        preds_per_class[:, c] = (probs[:, c] >= per_class_thr[c]).astype(np.int32)
+    precs, recs, mccs = [], [], []
+    for c in range(labels.shape[1]):
+        if labels[:, c].sum() == 0 and preds_per_class[:, c].sum() == 0:
+            continue
+        p, r, m = precision_recall_mcc(labels[:, c], preds_per_class[:, c])
+        if not np.isnan(p): precs.append(p)
+        if not np.isnan(r): recs.append(r)
+        if not np.isnan(m): mccs.append(m)
+    pc_score = float(np.nanmean([np.nanmean(precs), np.nanmean(recs), np.nanmean(mccs)]))
+    print(f"مقارنة: threshold عام={best_score:.4f}  |  threshold لكل فئة={pc_score:.4f}")
+
     out = {
         "global_threshold": best_thr,
-        "best_score": best_score,
+        "global_score": best_score,
+        "per_class_thresholds": per_class_thr,
+        "per_class_score": pc_score,
+        "per_class_info": per_class_info,
         "search_results": results,
     }
     out_path = Path(args.models_dir) / "thresholds.json"
@@ -142,7 +221,8 @@ def main():
     with open(out_path, "w") as f:
         json.dump(out, f, indent=2)
     print(f"\nحُفظ في {out_path}")
-    print("حدّث DECISION_THRESHOLD في inference.py بهذا الرقم.")
+    print("inference.py يقرأ per_class_thresholds تلقائيًا إذا وُجد الملف "
+          "(fallback إلى DECISION_THRESHOLD العام إذا لم يوجد).")
 
 
 if __name__ == "__main__":
