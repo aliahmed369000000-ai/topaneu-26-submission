@@ -66,22 +66,26 @@ class TopAneuDataset(Dataset):
         if do_flip:
             volume = np.ascontiguousarray(volume[:, :, :, ::-1])
             flipped = labels.copy()
+            # FLIP_MAP من vessel_preprocessing.py هي 0-based بالفعل (تطابق
+            # ترقيم مصفوفة labels مباشرة) -- لا حاجة لأي طرح/إضافة. الطرح
+            # السابق (src-1, dst-1) كان خطأً يُنتج إزاحة خاطئة صامتة لو
+            # طُبّق على خريطة 0-based (كما هي الحال هنا بعد توحيد المصدر).
             for src, dst in FLIP_MAP.items():
-                si, di = src - 1, dst - 1
-                if 0 <= si < len(labels) and 0 <= di < len(labels):
-                    flipped[di] = labels[si]
+                flipped[dst] = labels[src]
             labels = flipped
 
         return torch.from_numpy(volume), torch.from_numpy(labels)
 
 
-def compute_pos_weight(Y_train: np.ndarray) -> torch.Tensor:
+def compute_pos_weight(Y_train: np.ndarray, min_w: float = 1.0, max_w: float = 15.0,
+                        smoothing: float = 1.0) -> torch.Tensor:
+    """موحّدة الآن مع train.py بالضبط (نفس صيغة Laplace Smoothing + نفس
+    الحد الأقصى 15.0 -- كانت 50.0 بدون Smoothing سابقًا، ديناميكية تدريب
+    مختلفة عن باقي التجارب دون مبرر)."""
     pos = Y_train.sum(axis=0).astype(np.float32)
     neg = Y_train.shape[0] - pos
-    w = np.ones_like(pos)
-    mask = pos > 0
-    w[mask] = neg[mask] / pos[mask]
-    w = np.clip(w, 1.0, 50.0)
+    w = (neg + smoothing) / (pos + smoothing)
+    w = np.clip(w, min_w, max_w)
     return torch.from_numpy(w)
 
 
@@ -202,7 +206,14 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
         if auc > best_auc:
             best_auc = auc
             payload["best_auc"] = best_auc
-            save_ckpt(best_path, {"model_state_dict": payload["model"], "auc": best_auc, "fold": fold_idx})
+            # مهم: نحفظ كائن النموذج الكامل (torch.save(model, path))، تمامًا
+            # كما يفعل train.py -- لا قاموس state_dict. inference.py و
+            # calibrate_threshold.py يحمّلان عبر torch.load() ثم يستدعيان
+            # .eval() مباشرة على الناتج؛ قاموس عادي ليس له .eval() فيفشل
+            # الاستدلال فورًا لو استُخدمت أوزان مُدرّبة بالصيغة القديمة.
+            model_cpu = TopAneuNet()
+            model_cpu.load_state_dict(payload["model"])
+            save_ckpt(best_path, model_cpu)
             print(f"  ★ best → {best_path} (AUC={best_auc:.4f})")
         save_ckpt(ckpt_path, payload)
         print(f"  ✓ checkpoint → {ckpt_path} (epoch={epoch})")
