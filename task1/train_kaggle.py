@@ -47,7 +47,7 @@ FLIP_MAP = {
 
 
 def compute_pos_weight(labels: np.ndarray, min_w: float = 1.0, max_w: float = 15.0, smoothing: float = 1.0):
-    labels_t = torch.from_numpy(labels).float()
+    labels_t = torch.tensor(labels, dtype=torch.float32)
     n = labels_t.shape[0]
     pos = labels_t.sum(dim=0)
     neg = n - pos
@@ -94,7 +94,7 @@ class TopAneuDataset(Dataset):
             volume = np.stack([img, np.zeros_like(img)], 0).astype(np.float32)
         labels = self.Y[real_idx].copy().astype(np.float32)
 
-        volume_t = torch.from_numpy(volume)
+        volume_t = torch.tensor(volume, dtype=torch.float32)
         labels_t = torch.from_numpy(labels)
 
         if do_flip:

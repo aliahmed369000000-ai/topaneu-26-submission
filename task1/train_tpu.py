@@ -74,7 +74,7 @@ class TopAneuDataset(Dataset):
                 flipped[dst] = labels[src]
             labels = flipped
 
-        return torch.from_numpy(volume), torch.from_numpy(labels)
+        return torch.tensor(volume, dtype=torch.float32), torch.tensor(labels, dtype=torch.float32)
 
 
 def compute_pos_weight(Y_train: np.ndarray, min_w: float = 1.0, max_w: float = 15.0,
@@ -86,7 +86,7 @@ def compute_pos_weight(Y_train: np.ndarray, min_w: float = 1.0, max_w: float = 1
     neg = Y_train.shape[0] - pos
     w = (neg + smoothing) / (pos + smoothing)
     w = np.clip(w, min_w, max_w)
-    return torch.from_numpy(w)
+    return torch.tensor(w, dtype=torch.float32)
 
 
 @torch.no_grad()
