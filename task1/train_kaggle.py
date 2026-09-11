@@ -333,17 +333,20 @@ def main():
     if location_mapping_path is None:
         raise FileNotFoundError("location_mapping.json غير موجود")
 
-    device = torch.device("cpu")
-    if torch.cuda.is_available():
-        try:
-            # detect incompatible GPU (e.g. P100 sm_60 with new PyTorch)
-            x = torch.zeros(1, device="cuda")
-            del x
-            torch.cuda.empty_cache()
-            device = torch.device("cuda")
-        except Exception as e:
-            print(f"CUDA unusable ({e}); falling back to CPU")
-            device = torch.device("cpu")
+    if os.environ.get("TOPANEU_FORCE_CPU", "0") == "1":
+        device = torch.device("cpu")
+        print("FORCE CPU via TOPANEU_FORCE_CPU")
+    else:
+        device = torch.device("cpu")
+        if torch.cuda.is_available():
+            try:
+                x = torch.zeros(1, device="cuda")
+                del x
+                torch.cuda.empty_cache()
+                device = torch.device("cuda")
+            except Exception as e:
+                print(f"CUDA unusable ({e}); falling back to CPU")
+                device = torch.device("cpu")
     print(f"الجهاز: {device}")
     print(f"البيانات: {data_root}")
     print(f"الإخراج: {args.output_dir}")
