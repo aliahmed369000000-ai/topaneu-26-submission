@@ -95,7 +95,7 @@ class TopAneuDataset(Dataset):
         labels = self.Y[real_idx].copy().astype(np.float32)
 
         volume_t = torch.tensor(volume, dtype=torch.float32)
-        labels_t = torch.from_numpy(labels)
+        labels_t = torch.tensor(labels, dtype=torch.float32)
 
         if do_flip:
             volume_t = torch.flip(volume_t, dims=[-1])
