@@ -62,7 +62,8 @@ def evaluate_class_at_threshold(y_true: np.ndarray, y_score: np.ndarray, thr: fl
     return precision_recall_mcc(y_true, y_pred)
 
 
-def calibrate_per_class(probs: np.ndarray, labels: np.ndarray, min_positives: int = 3):
+def calibrate_per_class(probs: np.ndarray, labels: np.ndarray, min_positives: int = 1,
+                         fallback_threshold: float = 0.5):
     """
     يبحث عن أفضل threshold مستقل لكل فئة من الـ52 (بدل threshold عام واحد).
 
@@ -71,10 +72,16 @@ def calibrate_per_class(probs: np.ndarray, labels: np.ndarray, min_positives: in
     توازنًا خاطئًا بينهما، وهو مصدر رئيسي لـ False Positives الكثيرة
     (راجع نقاش استراتيجية تقليل False Positives في جلسة التصميم).
 
-    الفئات بعدد حالات إيجابية أقل من min_positives في Validation المجمّع
-    (بعد كل الـ folds) تُعطى threshold مرتفع جدًا (0.99) بدل قيمة
-    "محسوبة" غير موثوقة — لا توجد إشارة كافية لمعايرتها بأمان، ومحاولة
-    معايرتها ستنتج overfitting على ضجيج قليل الحالات.
+    ⚠️ تصحيح مهم (كان threshold=0.99 سابقًا، أُلغي): الفئات بعدد حالات
+    إيجابية أقل من min_positives تستخدم الآن fallback_threshold (threshold
+    العام المُعاير على كل البيانات، من evaluate_at_threshold/الحلقة في
+    main()) بدل قيمة شبه-حظر (0.99). اختبار فعلي كشف أن 0.99 على فولد
+    صغير (30 حالة تحقق) يرفض كل الفئات الـ52 دفعة واحدة (لا فئة لها 3+
+    حالات إيجابية) وينتج MCC=1.000 مضلِّلًا مع Recall=0.067 فقط -- النموذج
+    يتوقف عن التنبؤ بأي شيء تقريبًا، وهذا ليس نجاحًا حقيقيًا (راجع الشرح
+    الكامل في جلسة التصميم لماذا MCC مثالي هنا لا يعني نموذجًا جيدًا).
+    الفئات النادرة تستحق فرصة تنبؤ معقولة (threshold العام المُختبر على
+    كامل البيانات) بدل تعطيلها بالكامل.
     """
     n_classes = labels.shape[1]
     per_class_thr = []
@@ -86,10 +93,11 @@ def calibrate_per_class(probs: np.ndarray, labels: np.ndarray, min_positives: in
         n_pos = int(y_true.sum())
 
         if n_pos < min_positives:
-            per_class_thr.append(0.99)
+            per_class_thr.append(fallback_threshold)
             per_class_info.append({
-                "class_idx": c, "n_positives": n_pos, "threshold": 0.99,
-                "reason": f"إشارة غير كافية ({n_pos} < {min_positives}) — رُفض التنبؤ عمليًا",
+                "class_idx": c, "n_positives": n_pos, "threshold": fallback_threshold,
+                "reason": f"إشارة غير كافية ({n_pos} < {min_positives}) — استُخدم "
+                          f"threshold العام ({fallback_threshold:.3f}) بدل رفض كامل",
             })
             continue
 
@@ -188,7 +196,9 @@ def main():
         )
 
     # معايرة لكل فئة على حدة (الاستراتيجية الأساسية لتقليل False Positives)
-    per_class_thr, per_class_info = calibrate_per_class(probs, labels, min_positives=3)
+    per_class_thr, per_class_info = calibrate_per_class(
+        probs, labels, min_positives=1, fallback_threshold=best_thr
+    )
     n_rejected = sum(1 for info in per_class_info if info.get("reason"))
     print(f"\nمعايرة لكل فئة: {n_rejected}/{len(per_class_info)} فئة رُفضت "
           f"(إشارة غير كافية، threshold=0.99)")
