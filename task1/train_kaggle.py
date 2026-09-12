@@ -153,9 +153,17 @@ def load_checkpoint(path, model, optimizer, device):
         return 0, -1.0
     print(f"  ↻ استئناف من {path}")
     ckpt = torch.load(str(path), map_location=device, weights_only=False)
-    model.load_state_dict(ckpt["model"])
+    missing, unexpected = model.load_state_dict(ckpt["model"], strict=False)
+    if missing or unexpected:
+        print(f"  ⚠ load_state_dict strict=False missing={list(missing)[:5]} unexpected={list(unexpected)[:5]}")
+        # تغيّر المعمارية (مثل رأس مساعد) → لا نستأنف optimizer/epoch
+        return 0, -1.0
     if optimizer is not None and "optimizer" in ckpt:
-        optimizer.load_state_dict(ckpt["optimizer"])
+        try:
+            optimizer.load_state_dict(ckpt["optimizer"])
+        except Exception as e:
+            print(f"  ⚠ optimizer state incompatible: {e}")
+            return 0, float(ckpt.get("best_auc", -1.0))
     return int(ckpt.get("epoch", 0)) + 1, float(ckpt.get("best_auc", -1.0))
 
 
@@ -183,9 +191,13 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
         num_workers=args.num_workers, pin_memory=True, drop_last=False,
     )
 
-    model = TopAneuNet(in_channels=2, feature_dim=512).to(device)
+    model = TopAneuNet(in_channels=2, feature_dim=512, use_aux_group_head=True).to(device)
     pos_weight = compute_pos_weight(Y_train).to(device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+    Y_train_groups = TopAneuNet.labels_to_group_labels(torch.tensor(Y_train, dtype=torch.float32)).numpy()
+    group_pos_weight = compute_pos_weight(Y_train_groups).to(device)
+    aux_loss_fn = nn.BCEWithLogitsLoss(pos_weight=group_pos_weight)
+    AUX_LOSS_WEIGHT = 0.3
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     out_dir = Path(args.output_dir)
@@ -199,7 +211,7 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
         try:
             best_model = torch.load(str(best_path), map_location=device, weights_only=False)
             if hasattr(best_model, "state_dict"):
-                model.load_state_dict(best_model.state_dict())
+                model.load_state_dict(best_model.state_dict(), strict=False)
             print(f"  ↻ حُمّل أفضل نموذج سابق من {best_path}")
         except Exception as e:
             print(f"  ⚠ فشل تحميل best model: {e}")
@@ -213,8 +225,9 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad()
-            out = model(xb)
-            loss = loss_fn(out, yb)
+            out, aux_out = model(xb, return_aux=True)
+            yb_groups = TopAneuNet.labels_to_group_labels(yb)
+            loss = loss_fn(out, yb) + AUX_LOSS_WEIGHT * aux_loss_fn(aux_out, yb_groups)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             opt.step()
