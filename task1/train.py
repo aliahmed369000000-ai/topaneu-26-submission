@@ -138,6 +138,16 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
     model = TopAneuNet(in_channels=2, feature_dim=512).to(device)
     pos_weight = compute_pos_weight(Y_train).to(device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    # خسارة الرأس المساعد (5 مجموعات تشريحية بدل 52 فئة مفردة) -- إشارة
+    # أكثف بكثير لكل فئة نادرة (تُجمع مع فئات مجاورة تشريحيًا)، تُحسّن
+    # تمثيل الـBackbone المشترك دون تغيير شكل الإخراج الرسمي (52).
+    # pos_weight منفصل للمجموعات لأنها أقل ندرة من الفئات المفردة عادة.
+    Y_train_groups = TopAneuNet.labels_to_group_labels(torch.from_numpy(Y_train)).numpy()
+    group_pos_weight = compute_pos_weight(Y_train_groups).to(device)
+    aux_loss_fn = nn.BCEWithLogitsLoss(pos_weight=group_pos_weight)
+    AUX_LOSS_WEIGHT = 0.3  # وزن معتدل: مساعد، لا يطغى على الهدف الأساسي (52 فئة)
+
     opt = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
 
     best_auc = -1.0
@@ -151,8 +161,9 @@ def train_one_fold(fold_idx, fold, Y, case_ids, args, device):
         for xb, yb in train_loader:
             xb, yb = xb.to(device), yb.to(device)
             opt.zero_grad()
-            out = model(xb)
-            loss = loss_fn(out, yb)
+            out, aux_out = model(xb, return_aux=True)
+            yb_groups = TopAneuNet.labels_to_group_labels(yb)
+            loss = loss_fn(out, yb) + AUX_LOSS_WEIGHT * aux_loss_fn(aux_out, yb_groups)
             loss.backward()
             # Gradient Clipping: احتياط ضروري — لوحظ فعليًا أثناء الاختبار أن
             # التدرجات قد تكون ضخمة جدًا (مليارات) مع batch صغير (BatchNorm

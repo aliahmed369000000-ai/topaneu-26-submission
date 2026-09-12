@@ -90,10 +90,35 @@ class ResidualHead(nn.Module):
         return x  # logits خام (52,) — استخدم BCEWithLogitsLoss أو torch.sigmoid عند الاستدلال
 
 
-class TopAneuNet(nn.Module):
-    """الشبكة الكاملة: Backbone3D_v1 + ResidualHead."""
+# خريطة المجموعات التشريحية الخمس (مأخوذة مباشرة من ترقيم location_mapping.json
+# الرسمي: الرقم قبل النقطة في كل تسمية، مثل "1.4 BA trunk" أو "R-3.7 ICA
+# C7-terminus" -- 5 مناطق وعائية كبرى: 1=فقري قاعدي (17 فئة)، 2=مخيّة خلفية
+# (4 فئات)، 3=سباتي داخلي (14 فئة)، 4=مخيّة أمامية+Acom (9 فئات)، 5=مخيّة
+# وسطى (8 فئات). مفتاح تجميعي رسمي، لا تخمين.
+GROUP_MAP = {
+    0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0,
+    11: 0, 12: 0, 13: 0, 14: 0, 15: 0, 16: 0,
+    17: 1, 18: 1, 19: 1, 20: 1,
+    21: 2, 22: 2, 23: 2, 24: 2, 25: 2, 26: 2, 27: 2, 28: 2, 29: 2, 30: 2,
+    31: 2, 32: 2, 33: 2, 34: 2,
+    35: 3, 36: 3, 37: 3, 38: 3, 39: 3, 40: 3, 41: 3, 42: 3, 43: 3,
+    44: 4, 45: 4, 46: 4, 47: 4, 48: 4, 49: 4, 50: 4, 51: 4,
+}
+N_GROUPS = 5
 
-    def __init__(self, in_channels: int = 2, feature_dim: int = 512, head_widths: list = None):
+
+class TopAneuNet(nn.Module):
+    """الشبكة الكاملة: Backbone3D_v1 + ResidualHead + رأس مساعد اختياري
+    (Auxiliary Group Head) يتنبأ بالمنطقة الوعائية الكبرى (5 مجموعات بدل
+    52 فئة مفردة). الهدف: إشارة تدريب أكثف بكثير لكل فئة نادرة (تُجمع
+    حالاتها القليلة مع فئات مجاورة تشريحيًا في نفس المجموعة)، تُحسّن
+    تمثيل الـBackbone المشترك عبر Multi-task Learning -- دون تغيير شكل
+    الإخراج الرسمي المطلوب (52، عبر self.head فقط). الرأس المساعد
+    يُستخدم فقط أثناء التدريب (خسارة إضافية)؛ يمكن تجاهله بالكامل وقت
+    الاستدلال الفعلي (raw_logits فقط تُستخدم في inference.py)."""
+
+    def __init__(self, in_channels: int = 2, feature_dim: int = 512, head_widths: list = None,
+                 use_aux_group_head: bool = True):
         super().__init__()
         widths = head_widths or ResidualHead.DEFAULT_WIDTHS
         assert widths[0] == feature_dim, (
@@ -101,9 +126,27 @@ class TopAneuNet(nn.Module):
         )
         self.backbone = Backbone3D_v1(in_channels=in_channels, out_features=feature_dim)
         self.head = ResidualHead(widths)
+        self.use_aux_group_head = use_aux_group_head
+        if use_aux_group_head:
+            self.aux_group_head = nn.Linear(feature_dim, N_GROUPS)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.head(self.backbone(x))
+    def forward(self, x: torch.Tensor, return_aux: bool = False):
+        feat = self.backbone(x)
+        main_out = self.head(feat)
+        if return_aux and self.use_aux_group_head:
+            aux_out = self.aux_group_head(feat)
+            return main_out, aux_out
+        return main_out
+
+    @staticmethod
+    def labels_to_group_labels(y: torch.Tensor) -> torch.Tensor:
+        """يحوّل مصفوفة تسميات (batch, 52) إلى (batch, 5) على مستوى
+        المجموعة: المجموعة إيجابية إذا كانت أي فئة ضمنها إيجابية."""
+        batch = y.shape[0]
+        group_y = torch.zeros(batch, N_GROUPS, dtype=y.dtype, device=y.device)
+        for c, g in GROUP_MAP.items():
+            group_y[:, g] = torch.maximum(group_y[:, g], y[:, c])
+        return group_y
 
 
 def count_parameters(model: nn.Module) -> int:
@@ -146,13 +189,19 @@ if __name__ == "__main__":
     net.eval()
     with torch.no_grad():
         out = net(dummy)
+        out_with_aux, aux_out = net(dummy, return_aux=True)
     assert out.shape == (1, 52), f"شكل غير متوقع: {out.shape}"
+    assert aux_out.shape == (1, N_GROUPS), f"شكل الرأس المساعد غير متوقع: {aux_out.shape}"
+    assert torch.allclose(out, out_with_aux), "الإخراج الرئيسي يجب أن يبقى مطابقًا بوجود/غياب return_aux"
 
     n_backbone = count_parameters(net.backbone)
     n_head = count_parameters(net.head)
-    n_total = n_backbone + n_head
+    n_aux = count_parameters(net.aux_group_head) if net.use_aux_group_head else 0
+    n_total = n_backbone + n_head + n_aux
 
-    print(f"شكل الإخراج: {tuple(out.shape)} (متوقع: (1, 52)) ✓")
+    print(f"شكل الإخراج الرئيسي: {tuple(out.shape)} (متوقع: (1, 52)) ✓")
+    print(f"شكل الرأس المساعد: {tuple(aux_out.shape)} (متوقع: (1, {N_GROUPS})) ✓")
     print(f"معاملات Backbone: {n_backbone:,}")
     print(f"معاملات الرأس: {n_head:,}")
+    print(f"معاملات الرأس المساعد: {n_aux:,}")
     print(f"الإجمالي: {n_total:,} ({n_total * 4 / 1e6:.1f} MB, fp32)")
