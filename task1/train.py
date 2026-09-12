@@ -23,7 +23,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-from model import TopAneuNet, count_parameters
+from model import TopAneuNet, count_parameters, get_device
 from dataset_split import build_label_matrix, make_folds, evaluable_classes
 from vessel_preprocessing import load_and_resize_case, FLIP_MAP
 
@@ -195,7 +195,7 @@ def main():
     location_jsons_dir = data_root / "location_jsons"
     location_mapping_path = data_root / "location_mapping.json"
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
     print(f"الجهاز: {device}")
 
     location_mapping = json.load(open(location_mapping_path))

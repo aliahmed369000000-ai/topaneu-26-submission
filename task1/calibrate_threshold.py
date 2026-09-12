@@ -17,7 +17,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from model import TopAneuNet
+from model import TopAneuNet, get_device
 from dataset_split import build_label_matrix, make_folds, evaluable_classes
 from vessel_preprocessing import load_and_resize_case
 from train import TopAneuDataset, FLIP_MAP, N_CLASSES
@@ -131,7 +131,7 @@ def main():
     Y = build_label_matrix(str(location_jsons_dir), location_mapping, case_ids, n_classes=N_CLASSES)
     folds = make_folds(case_ids, Y, n_splits=args.n_splits, seed=args.seed)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = get_device()
 
     # جمع احتمالات Validation من كل fold
     all_probs = []

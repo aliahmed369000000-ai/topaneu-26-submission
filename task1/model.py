@@ -12,6 +12,8 @@
   - Backbone يقبل قناتين دخل (Intensity + Vessel Mask Binary).
 """
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -106,6 +108,35 @@ class TopAneuNet(nn.Module):
 
 def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())
+
+
+def get_device() -> torch.device:
+    """اختيار الجهاز بأمان (مصدر وحيد، يستورده train.py/inference.py/
+    calibrate_threshold.py/train_kaggle.py -- كان مكررًا بصيغتين مختلفتين:
+    train_kaggle.py وحده كان يفحص فعليًا (يحاول تخصيص تنسور على cuda)،
+    بينما البقية تكتفي بـtorch.cuda.is_available() الذي *لا* يكتشف أعطالًا
+    مثل P100 (sm_60) مع إصدارات PyTorch الحديثة التي أسقطت دعم هذه
+    المعمارية -- is_available() يتحقق فقط من وجود السائق (driver)، لا من
+    قابلية تشغيل العمليات فعليًا على الجهاز؛ الفشل الحقيقي يحدث لاحقًا
+    عند أول عملية حقيقية على الـGPU، بشكل مفاجئ ومربك.
+
+    يدعم أيضًا متغير البيئة TOPANEU_FORCE_CPU=1 لتعطيل GPU يدويًا (مفيد
+    لتفادي عطل معروف بدون انتظار اكتشافه في كل مرة)."""
+    if os.environ.get("TOPANEU_FORCE_CPU", "0") == "1":
+        print("FORCE CPU via TOPANEU_FORCE_CPU")
+        return torch.device("cpu")
+
+    if torch.cuda.is_available():
+        try:
+            x = torch.zeros(1, device="cuda")
+            del x
+            torch.cuda.empty_cache()
+            return torch.device("cuda")
+        except Exception as e:
+            print(f"CUDA unusable ({e}); falling back to CPU")
+            return torch.device("cpu")
+
+    return torch.device("cpu")
 
 
 if __name__ == "__main__":

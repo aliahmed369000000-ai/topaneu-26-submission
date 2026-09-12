@@ -30,20 +30,11 @@ from torch.utils.data import Dataset, DataLoader
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from model import TopAneuNet, count_parameters
+from model import TopAneuNet, count_parameters, get_device
 from dataset_split import build_label_matrix, make_folds, evaluable_classes
-from vessel_preprocessing import load_and_resize_case
+from vessel_preprocessing import load_and_resize_case, FLIP_MAP
 
 N_CLASSES = 52
-
-FLIP_MAP = {
-    0: 1, 1: 0, 2: 3, 3: 2, 4: 5, 5: 4, 8: 9, 9: 8, 10: 11, 11: 10,
-    12: 13, 13: 12, 14: 15, 15: 14, 17: 18, 18: 17, 19: 20, 20: 19,
-    21: 22, 22: 21, 23: 24, 24: 23, 25: 26, 26: 25, 27: 28, 28: 27,
-    29: 30, 30: 29, 31: 32, 32: 31, 33: 34, 34: 33, 36: 37, 37: 36,
-    38: 39, 39: 38, 40: 41, 41: 40, 42: 43, 43: 42, 44: 45, 45: 44,
-    46: 47, 47: 46, 48: 49, 49: 48, 50: 51, 51: 50,
-}
 
 
 def compute_pos_weight(labels: np.ndarray, min_w: float = 1.0, max_w: float = 15.0, smoothing: float = 1.0):
@@ -333,20 +324,7 @@ def main():
     if location_mapping_path is None:
         raise FileNotFoundError("location_mapping.json غير موجود")
 
-    if os.environ.get("TOPANEU_FORCE_CPU", "0") == "1":
-        device = torch.device("cpu")
-        print("FORCE CPU via TOPANEU_FORCE_CPU")
-    else:
-        device = torch.device("cpu")
-        if torch.cuda.is_available():
-            try:
-                x = torch.zeros(1, device="cuda")
-                del x
-                torch.cuda.empty_cache()
-                device = torch.device("cuda")
-            except Exception as e:
-                print(f"CUDA unusable ({e}); falling back to CPU")
-                device = torch.device("cpu")
+    device = get_device()
     print(f"الجهاز: {device}")
     print(f"البيانات: {data_root}")
     print(f"الإخراج: {args.output_dir}")

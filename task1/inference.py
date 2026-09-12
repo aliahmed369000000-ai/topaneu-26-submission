@@ -24,6 +24,7 @@ import SimpleITK as sitk
 from scipy.ndimage import zoom
 
 from vessel_preprocessing import FLIP_MAP  # مصدر وحيد، يمنع تكرار/تعارض
+from model import get_device  # نفس فحص GPU الآمن المُستخدم في كل الملفات الأخرى
 
 # ---------------------------------------------------------------------------
 # إعدادات قابلة للتعديل
@@ -62,7 +63,7 @@ TARGET_SHAPE = (128, 128, 128)
 
 # FLIP_MAP يُستورد من vessel_preprocessing.py (مصدر وحيد)
 
-_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+_DEVICE = get_device()
 _MODELS = None  # list of models (ensemble)
 _PER_CLASS_THRESHOLDS = None  # يُحمَّل مرة واحدة من thresholds.json إن وُجد
 
