@@ -133,9 +133,24 @@ def main():
     images_dir = data_root / "images"
     vessel_masks_dir = data_root / "vessel_masks"
     location_jsons_dir = data_root / "location_jsons"
-    location_mapping = json.load(open(data_root / "location_mapping.json"))
+    mapping_path = data_root / "location_mapping.json"
+    if not mapping_path.is_file():
+        mapping_path = Path(__file__).resolve().parent.parent / "docs" / "location_mapping.json"
+    location_mapping = json.load(open(mapping_path))
+    print(f"location_mapping={mapping_path}")
 
-    case_ids = sorted(p.stem.replace(".nii", "") for p in images_dir.glob("*.nii.gz"))
+    def _case_id_from_image(path: Path) -> str:
+        name = path.name
+        if name.endswith(".nii.gz"):
+            name = name[:-7]
+        elif name.endswith(".nii"):
+            name = name[:-4]
+        if name.endswith("_0000"):
+            name = name[:-5]
+        return name
+
+    case_ids = sorted({_case_id_from_image(p) for p in images_dir.glob("*.nii.gz")})
+    print(f"cases={len(case_ids)}")
     Y = build_label_matrix(str(location_jsons_dir), location_mapping, case_ids, n_classes=N_CLASSES)
     folds = make_folds(case_ids, Y, n_splits=args.n_splits, seed=args.seed)
 
