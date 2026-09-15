@@ -8,21 +8,16 @@ USER user
 WORKDIR /opt/app
 
 COPY --chown=user:user requirements.txt /opt/app/
-
 RUN python -m pip install \
     --user \
     --no-cache-dir \
     --no-color \
     --requirement /opt/app/requirements.txt
 
-# الكود الأساسي
-COPY --chown=user:user main.py /opt/app/
-COPY --chown=user:user inference.py /opt/app/
-COPY --chown=user:user model.py /opt/app/
-COPY --chown=user:user vessel_preprocessing.py /opt/app/
+COPY --chown=user:user main.py inference.py model.py vessel_preprocessing.py /opt/app/
 
-# الأوزان (يجب أن تكون موجودة قبل البناء أو تُرفع كـ Model على GC)
-# في GC تُستخرج الأوزان إلى /opt/ml/model تلقائيًا إذا رفعتها كـ Model tarball
+# نسخة احتياطية اختيارية للأوزان داخل الصورة (إن وُجدت وقت البناء)
+# على GC المصدر الأساسي: /opt/ml/model من Model tarball
 COPY --chown=user:user models/ /opt/app/models/
 
 ENTRYPOINT ["python", "main.py"]

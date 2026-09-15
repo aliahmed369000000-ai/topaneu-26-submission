@@ -24,7 +24,7 @@ import SimpleITK as sitk
 from scipy.ndimage import zoom
 
 from vessel_preprocessing import FLIP_MAP  # مصدر وحيد، يمنع تكرار/تعارض
-from model import get_device  # نفس فحص GPU الآمن المُستخدم في كل الملفات الأخرى
+from model import get_device, TopAneuNet  # TopAneuNet مطلوب لـ torch.load للكائن الكامل
 
 # ---------------------------------------------------------------------------
 # إعدادات قابلة للتعديل
@@ -44,7 +44,7 @@ FOLD_WEIGHTS = [
 FINAL_WEIGHT = "topaneu_task1_final.pt"
 
 # threshold عام (احتياطي فقط -- يُستخدم إذا لم يوجد models/thresholds.json)
-DECISION_THRESHOLD = 0.45
+DECISION_THRESHOLD = 0.15  # من معايرة OOF
 
 # ملف المعايرة لكل فئة (يُنتجه calibrate_threshold.py). إذا وُجد، يُستخدم
 # threshold مستقل لكل فئة من الـ52 بدل القيمة العامة أعلاه -- هذا يقلل
@@ -53,6 +53,7 @@ DECISION_THRESHOLD = 0.45
 # استراتيجية تقليل False Positives).
 THRESHOLDS_FILE_CANDIDATES = [
     Path("/opt/ml/model/thresholds.json"),
+    Path("/opt/app/models/thresholds.json"),
     Path("./models/thresholds.json"),
 ]
 
@@ -78,12 +79,21 @@ def _load_thresholds_once():
     for path in THRESHOLDS_FILE_CANDIDATES:
         if path.is_file():
             data = json.loads(path.read_text())
+            # إذا كان الـ threshold العام أفضل على OOF، لا نفرض per-class
+            g_score = float(data.get("global_score") or 0)
+            pc_score = float(data.get("per_class_score") or 0)
             thr_list = data.get("per_class_thresholds")
-            if thr_list and len(thr_list) == 52:
+            if thr_list and len(thr_list) == 52 and pc_score > g_score:
                 _PER_CLASS_THRESHOLDS = np.array(thr_list, dtype=np.float32)
                 return _PER_CLASS_THRESHOLDS
+            # استخدم العام عبر DECISION_THRESHOLD بعد تحديثه من الملف
+            if data.get("global_threshold") is not None:
+                global DECISION_THRESHOLD
+                DECISION_THRESHOLD = float(data["global_threshold"])
+            _PER_CLASS_THRESHOLDS = False
+            return _PER_CLASS_THRESHOLDS
 
-    _PER_CLASS_THRESHOLDS = False  # علامة "بحثنا ولم نجد" لتفادي إعادة المحاولة كل مرة
+    _PER_CLASS_THRESHOLDS = False
     return _PER_CLASS_THRESHOLDS
 
 
@@ -112,7 +122,7 @@ def _load_models_once():
 
     if not models:
         # محاولة إضافية من المسار النسبي (للتطوير المحلي)
-        local_dir = Path("./models")
+        local_dir = Path("/opt/app/models") if Path("/opt/app/models").is_dir() else Path("./models")
         for name in FOLD_WEIGHTS + [FINAL_WEIGHT]:
             path = local_dir / name
             if path.is_file():
