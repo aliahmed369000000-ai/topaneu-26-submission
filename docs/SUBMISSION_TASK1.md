@@ -34,3 +34,39 @@
 ## ملاحظة
 
 النموذج مدرّب على قناتين؛ وقت الاستدلال لا يوجد vessel mask → قناة ثانية صفرية.
+
+## اختبار محلي بـ Docker (حالة واحدة)
+
+```bash
+cd task1
+
+# 1) حضّر حالة (NIfTI من بيانات التدريب مثلاً)
+python prepare_test_case.py \
+  --image /path/to/topaneu_center2_ct_105_0000.nii.gz \
+  --modality ct \
+  --out-dir ./test
+
+# 2) الأوزان: إمّا داخل models/ أو tarball
+#    انسخ topaneu_task1_fold*.pt + thresholds.json إلى models/
+#    أو:
+#    export MODEL_TAR=/path/to/topaneu_task1_model.tar.gz
+
+# 3) بناء + تشغيل (GPU إن وُجد؛ احذف --gpus all إن لم يتوفر)
+./do_test_run.sh
+
+# 4) اقرأ النتيجة
+cat test/output/detected-aneurysm-locations.json
+```
+
+تشغيل يدوي مكافئ:
+
+```bash
+docker build -t topaneu-task1 .
+docker run --rm \
+  -v $PWD/test/input:/input:ro \
+  -v $PWD/test/output:/output \
+  -v $PWD/test/model:/opt/ml/model:ro \
+  topaneu-task1
+```
+
+`DECISION_THRESHOLD=0.55` (مثبت في inference.py و thresholds.json).
