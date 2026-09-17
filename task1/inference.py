@@ -44,7 +44,7 @@ FOLD_WEIGHTS = [
 FINAL_WEIGHT = "topaneu_task1_final.pt"
 
 # threshold عام (احتياطي فقط -- يُستخدم إذا لم يوجد models/thresholds.json)
-DECISION_THRESHOLD = 0.15  # من معايرة OOF
+DECISION_THRESHOLD = 0.55  # OOF scan: mean_pred≈2.5, median=2, قريب من GT≈0.95
 
 # ملف المعايرة لكل فئة (يُنتجه calibrate_threshold.py). إذا وُجد، يُستخدم
 # threshold مستقل لكل فئة من الـ52 بدل القيمة العامة أعلاه -- هذا يقلل
