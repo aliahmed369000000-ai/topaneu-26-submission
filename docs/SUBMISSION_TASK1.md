@@ -11,7 +11,7 @@
 
 - Ensemble: 5 folds
 - TTA flip: مفعّل
-- Threshold: `global_threshold=0.15` من معايرة OOF (يفضَّل على per-class حسب الـ score)
+- Threshold: `global_threshold=0.55` من فحص OOF (415 حالة) — 0.15 كان يعظّم Score إحصائيًا لكن ينتج ~21 تنبؤًا/حالة (غير واقعي طبيًا مقابل ~0.95 حقيقي)؛ 0.55 يوازن Score مع واقعية عدد المواقع (mean≈2.5, median=2)
 
 ## خطوات Grand Challenge
 
