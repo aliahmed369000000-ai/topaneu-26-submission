@@ -42,6 +42,7 @@ class UNet3D(nn.Module):
     def __init__(self, in_channels: int = 2, n_classes: int = N_CLASSES_TASK2,
                  channels: tuple = (16, 32, 64, 128, 256)):
         super().__init__()
+        self._n_downsample_stages = 4  # يحدد قيد القسمة أدناه؛ حدّثه لو غيّرت عدد المراحل
         c1, c2, c3, c4, c5 = channels
 
         # Encoder
@@ -66,6 +67,15 @@ class UNet3D(nn.Module):
         self.out_conv = nn.Conv3d(c1, n_classes, kernel_size=1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        divisor = 2 ** self._n_downsample_stages
+        for dim_name, dim_size in zip(("D", "H", "W"), x.shape[2:]):
+            assert dim_size % divisor == 0, (
+                f"بُعد الإدخال {dim_name}={dim_size} يجب أن يقبل القسمة على {divisor} "
+                f"(= 2^{self._n_downsample_stages} مراحل تصغير) وإلا لن تتطابق أبعاد "
+                f"وصلات التخطي (Skip Connections) بين Encoder وDecoder. مثال صحيح: 128 "
+                f"(الحجم الحقيقي المستهدف). مثال خاطئ: 24 (اكتُشف فعليًا أثناء الاختبار)."
+            )
+
         # Encoder (نحفظ كل مستوى قبل التصغير لوصلات التخطي)
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool(e1))
